@@ -53,6 +53,19 @@ def sanitize_error(value: str) -> str:
     return text
 
 
+def _path_has_reparse_component(path: Path, root: Path) -> bool:
+    current = path
+    while current != root and current != current.parent:
+        try:
+            stat_result = current.lstat()
+            if current.is_symlink() or bool(getattr(stat_result, "st_file_attributes", 0) & 0x400):
+                return True
+        except FileNotFoundError:
+            pass
+        current = current.parent
+    return False
+
+
 def _validate_alias(alias: Any) -> str:
     if not isinstance(alias, str) or not ALIAS_RE.fullmatch(alias):
         raise SrmError("Invalid profile alias.")
@@ -267,9 +280,13 @@ class SshRemoteService:
         if not isinstance(path, str) or not path:
             return False
         try:
-            resolved = Path(os.path.expandvars(path)).expanduser().resolve(strict=False)
-            ssh_root = (Path.home() / ".ssh").resolve(strict=False)
-            return resolved.is_relative_to(ssh_root) and resolved.is_file()
+            ssh_root = (Path.home() / ".ssh").absolute()
+            candidate = Path(os.path.expandvars(path)).expanduser().absolute()
+            if not candidate.is_relative_to(ssh_root) or _path_has_reparse_component(candidate, ssh_root):
+                return False
+            resolved_root = ssh_root.resolve(strict=False)
+            resolved = candidate.resolve(strict=False)
+            return resolved.is_relative_to(resolved_root) and resolved.is_file()
         except (OSError, RuntimeError):
             return False
 

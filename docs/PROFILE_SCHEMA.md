@@ -1,6 +1,6 @@
 # Profile schema
 
-`%USERPROFILE%\.ssh\ssh-remote-manager\profiles.json` is the single source of truth. It contains no password or key material. `identityFile` is a local path reference and must resolve beneath `%USERPROFILE%\.ssh`.
+`%USERPROFILE%\.ssh\ssh-remote-manager\profiles.json` is the single source of truth. It contains no password or key material. `identityFile` is a local path reference, must remain beneath `%USERPROFILE%\.ssh`, and cannot traverse a child symlink, junction, or other reparse point.
 
 ```json
 {

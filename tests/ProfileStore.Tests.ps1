@@ -161,6 +161,18 @@ Host neutral
         Assert-Throws { Test-SrmProfile -Profile $outside -SshRoot $script:sshRoot -AllowMissingKey }
     }
 
+    It 'rejects a key path that escapes through a junction' {
+        $outsideDirectory = Join-Path $script:testRoot 'outside-keys'
+        New-Item -ItemType Directory -Path $outsideDirectory | Out-Null
+        Set-Content -LiteralPath (Join-Path $outsideDirectory 'id_jump') -Value 'not a real key' -Encoding Ascii
+        $junction = Join-Path $script:sshRoot 'linked-keys'
+        New-Item -ItemType Junction -Path $junction -Target $outsideDirectory | Out-Null
+        $profile = New-TestProfile
+        $profile.identityFile = Join-Path $junction 'id_jump'
+
+        Assert-Throws { Test-SrmProfile -Profile $profile -SshRoot $script:sshRoot -AllowMissingKey }
+    }
+
     It 'requires a supported environment and tolerates a missing key only when requested' {
         $profile = New-TestProfile -Environment production
         Remove-Item -LiteralPath $profile.identityFile

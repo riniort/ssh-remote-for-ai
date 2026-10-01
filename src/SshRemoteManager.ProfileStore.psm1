@@ -32,6 +32,24 @@ function Test-SrmPathWithinRoot {
     $fullPath.Equals($fullRoot, $comparison) -or $fullPath.StartsWith($fullRoot + [System.IO.Path]::DirectorySeparatorChar, $comparison)
 }
 
+function Test-SrmPathHasReparsePoint {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Root)
+    $fullPath = ConvertTo-SrmFullPath $Path
+    $fullRoot = (ConvertTo-SrmFullPath $Root).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+    $comparison = if ($env:OS -eq 'Windows_NT') { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+    $current = $fullPath
+    while (-not [string]::IsNullOrWhiteSpace($current) -and -not $current.Equals($fullRoot, $comparison)) {
+        if (Test-Path -LiteralPath $current) {
+            $item = Get-Item -LiteralPath $current -Force
+            if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { return $true }
+        }
+        $parent = Split-Path -Parent $current
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent.Equals($current, $comparison)) { break }
+        $current = $parent
+    }
+    return $false
+}
+
 function Invoke-SrmWithFileLock {
     param(
         [Parameter(Mandatory)][string]$LockPath,
@@ -164,6 +182,7 @@ function Test-SrmProfile {
     if ($connectionMode -eq 'managed' -and [string]::IsNullOrWhiteSpace($identityFile)) { throw "Profile '$($Profile.alias)' has no identityFile." }
     if (-not [string]::IsNullOrWhiteSpace($identityFile)) {
         if (-not (Test-SrmPathWithinRoot -Path $identityFile -Root $SshRoot)) { throw "identityFile for profile '$($Profile.alias)' must be under the SSH directory." }
+        if (Test-SrmPathHasReparsePoint -Path $identityFile -Root $SshRoot) { throw "identityFile for profile '$($Profile.alias)' cannot traverse a symlink, junction, or reparse point." }
         if (-not $AllowMissingKey -and -not (Test-Path -LiteralPath $identityFile -PathType Leaf)) { throw "Private key is missing for profile '$($Profile.alias)'." }
     }
     if ($connectionMode -eq 'ssh-config-alias') {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -126,6 +127,32 @@ class CoreTests(unittest.TestCase):
         self.assertNotIn("sshConfigAlias", details)
         args = json.loads(record.read_text(encoding="utf-8"))
         self.assertEqual(args[args.index("--") + 1], "existing-prod")
+
+    def test_key_readiness_rejects_symlinked_key_path(self) -> None:
+        user_home = self.home / "user"
+        ssh_root = user_home / ".ssh"
+        ssh_root.mkdir(parents=True)
+        regular_key = ssh_root / "id_regular"
+        regular_key.write_text("not a real key", encoding="utf-8")
+        profile = payload(str(regular_key))["profiles"][0]
+        with patch.object(Path, "home", return_value=user_home):
+            self.assertTrue(self.service._key_ready(profile))
+            outside_directory = self.home / "outside-keys"
+            outside_directory.mkdir()
+            (outside_directory / "id_linked").write_text("not a real key", encoding="utf-8")
+            linked_directory = ssh_root / "linked-keys"
+            try:
+                linked_directory.symlink_to(outside_directory, target_is_directory=True)
+            except OSError as exc:
+                if os.name != "nt":
+                    self.skipTest(f"symlink creation is unavailable: {exc}")
+                script = "New-Item -ItemType Junction -Path $env:SRM_TEST_LINK -Target $env:SRM_TEST_TARGET | Out-Null"
+                child_env = {**os.environ, "SRM_TEST_LINK": str(linked_directory),
+                             "SRM_TEST_TARGET": str(outside_directory)}
+                subprocess.run(["powershell.exe", "-NoProfile", "-Command", script],
+                               check=True, env=child_env)
+            profile["identityFile"] = str(linked_directory / "id_linked")
+            self.assertFalse(self.service._key_ready(profile))
 
     def test_duplicate_alias_rejected_case_insensitively(self) -> None:
         data = payload()
