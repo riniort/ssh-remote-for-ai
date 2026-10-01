@@ -1,0 +1,4 @@
+interface:
+  display_name: "SSH Remote Manager"
+  short_description: "Safely inspect allowlisted SSH profiles"
+  default_prompt: "Use $manage-ssh-remotes to inspect an SSH profile safely."

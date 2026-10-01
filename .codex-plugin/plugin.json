@@ -1,0 +1,26 @@
+{
+  "name": "ssh-remote-for-ai",
+  "version": "0.1.0",
+  "description": "Read-only SSH profile inspection through a local, policy-enforcing MCP companion for SSH Remote Manager.",
+  "author": {
+    "name": "Local developer"
+  },
+  "license": "MIT",
+  "keywords": ["ssh", "mcp", "remote", "operations", "security"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "SSH Remote Manager",
+    "shortDescription": "Inspect allowlisted SSH profiles safely.",
+    "longDescription": "A local companion for managing and inspecting SSH profiles without exposing private keys. Phase 1 provides only bounded, policy-controlled, read-only MCP tools.",
+    "developerName": "Local developer",
+    "category": "Developer Tools",
+    "capabilities": ["Read"],
+    "defaultPrompt": [
+      "List my SSH profiles and show their environments.",
+      "Test this development profile safely.",
+      "Read an allowlisted service status."
+    ],
+    "brandColor": "#16C2D2"
+  }
+}

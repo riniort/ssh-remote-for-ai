@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "ssh-remote-manager": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server/ssh_remote_mcp.py"]
+    }
+  }
+}
