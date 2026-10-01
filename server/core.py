@@ -17,6 +17,7 @@ SERVICE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$")
 TARGET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 SAFE_PATH_RE = re.compile(r"^/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+$")
 ENVIRONMENTS = {"development", "staging", "production"}
+CONNECTION_MODES = {"managed", "ssh-config-alias"}
 SECRET_PATTERNS = [
     re.compile(r"(?i)\b(password|passwd|pwd|token|secret|api[_-]?key)\b\s*[:=]\s*([^\s,;]+)"),
     re.compile(r"(?i)\b([A-Z0-9_]*(?:PASSWORD|PASSWD|TOKEN|SECRET|API_KEY)[A-Z0-9_]*)\b\s*[:=]\s*([^\s,;]+)"),
@@ -44,6 +45,14 @@ def redact(value: str) -> str:
     return text
 
 
+def sanitize_error(value: str) -> str:
+    """Redact secrets and local filesystem paths from agent-visible errors."""
+    text = redact(value)
+    text = re.sub(r"(?i)(?:[A-Z]:\\|\\\\)[^\r\n\"']+", "[path]", text)
+    text = re.sub(r"(?i)(?<![A-Za-z0-9])/(?:home|users|root|var|etc|opt|tmp)/[^\s\"']+", "[path]", text)
+    return text
+
+
 def _validate_alias(alias: Any) -> str:
     if not isinstance(alias, str) or not ALIAS_RE.fullmatch(alias):
         raise SrmError("Invalid profile alias.")
@@ -61,6 +70,11 @@ def _validate_profile(profile: dict[str, Any]) -> dict[str, Any]:
     port = profile.get("port", 22)
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
         raise SrmError(f"Profile '{alias}' has an invalid port.")
+    mode = profile.get("connectionMode", "managed")
+    if mode not in CONNECTION_MODES:
+        raise SrmError(f"Profile '{alias}' has an invalid connection mode.")
+    if mode == "ssh-config-alias":
+        _validate_alias(profile.get("sshConfigAlias"))
     return profile
 
 
@@ -208,7 +222,7 @@ class SshRunner:
         process.stderr.close()
         duration_ms = round((time.monotonic() - started) * 1000)
         stdout = redact(buffers[0].decode("utf-8", errors="replace"))
-        stderr = redact(buffers[1].decode("utf-8", errors="replace"))
+        stderr = sanitize_error(buffers[1].decode("utf-8", errors="replace"))
         if timed_out:
             return RunResult("timeout", None, duration_ms, stdout, "SSH operation timed out.", any(over))
         status = "success" if process.returncode == 0 else classify_error(stderr)
@@ -228,13 +242,14 @@ def classify_error(stderr: str) -> str:
     return "ssh_failed"
 
 
-def public_profile(profile: dict[str, Any], key_ready: bool) -> dict[str, Any]:
+def public_profile(profile: dict[str, Any], key_ready: bool | None) -> dict[str, Any]:
     return {
         "alias": profile["alias"], "displayName": profile.get("displayName", profile["alias"]),
         "host": profile["host"], "port": profile.get("port", 22), "user": profile["user"],
         "environment": profile["environment"], "capabilities": profile.get("capabilities", {}),
         "allowlists": profile.get("allowlists", {}), "lastTestedUtc": profile.get("lastTestedUtc"),
-        "keyReady": key_ready,
+        "keyReady": key_ready, "connectionMode": profile.get("connectionMode", "managed"),
+        "authSource": "ssh-config" if profile.get("connectionMode") == "ssh-config-alias" else "managed-key",
     }
 
 
@@ -245,7 +260,9 @@ class SshRemoteService:
         self.audit = AuditLog(self.store.home)
 
     @staticmethod
-    def _key_ready(profile: dict[str, Any]) -> bool:
+    def _key_ready(profile: dict[str, Any]) -> bool | None:
+        if profile.get("connectionMode") == "ssh-config-alias":
+            return None
         path = profile.get("identityFile")
         if not isinstance(path, str) or not path:
             return False
@@ -265,7 +282,8 @@ class SshRemoteService:
         return public_profile(profile, self._key_ready(profile))
 
     def _run(self, tool: str, profile: dict[str, Any], args: list[str]) -> RunResult:
-        return self.runner.run(profile["alias"], args)
+        target = profile.get("sshConfigAlias") if profile.get("connectionMode") == "ssh-config-alias" else profile["alias"]
+        return self.runner.run(target, args)
 
     @staticmethod
     def _result(result: RunResult) -> dict[str, Any]:

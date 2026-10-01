@@ -188,4 +188,24 @@ Host neutral
         }
         (Get-Content -LiteralPath $script:configPath -Raw) | Should Be $before
     }
+
+    It 'imports an existing SSH Host by reference without rewriting it or requiring a key' {
+        $original = "# operator-owned`r`nHost existing-prod`r`n    HostName prod.example.test`r`n    ProxyJump bastion`r`n"
+        [System.IO.File]::WriteAllText($script:configPath, $original)
+        $profile = [pscustomobject]@{
+            alias = 'existing-prod'; displayName = 'Existing production'; host = 'prod.example.test'
+            port = 22; user = 'deploy'; environment = 'production'; connectionMode = 'ssh-config-alias'
+            sshConfigAlias = 'existing-prod'; identityFile = ''
+            capabilities = [pscustomobject]@{ serverInfo = $true; systemd = $false; docker = $false; logs = $false }
+            allowlists = [pscustomobject]@{ services = @(); logTargets = @() }; lastTestedUtc = $null
+        }
+
+        Save-SrmProfile -Profile $profile -StorePath $script:storePath -SshConfigPath $script:configPath -SshRoot $script:sshRoot | Out-Null
+
+        [System.IO.File]::ReadAllText($script:configPath) | Should Be $original
+        $saved = Get-SrmProfile -Alias 'existing-prod' -StorePath $script:storePath -SshRoot $script:sshRoot
+        $saved.connectionMode | Should Be 'ssh-config-alias'
+        $saved.sshConfigAlias | Should Be 'existing-prod'
+        $saved.identityFile | Should Be ''
+    }
 }

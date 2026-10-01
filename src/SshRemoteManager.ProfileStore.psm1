@@ -132,6 +132,13 @@ function Get-SrmProfile {
     $matches[0]
 }
 
+function Get-SrmConnectionMode {
+    param([Parameter(Mandatory)]$Profile)
+    $property = $Profile.PSObject.Properties['connectionMode']
+    if ($null -eq $property -or [string]::IsNullOrWhiteSpace([string]$property.Value)) { return 'managed' }
+    [string]$property.Value
+}
+
 function Test-SrmProfile {
     [CmdletBinding()]
     param(
@@ -150,9 +157,20 @@ function Test-SrmProfile {
     $port = 0
     if (-not [int]::TryParse([string]$Profile.port, [ref]$port) -or $port -lt 1 -or $port -gt 65535) { throw "Invalid port for profile '$($Profile.alias)'." }
     if ([string]$Profile.environment -notin @('development', 'staging', 'production')) { throw "Invalid environment for profile '$($Profile.alias)'." }
-    if ([string]::IsNullOrWhiteSpace([string]$Profile.identityFile)) { throw "Profile '$($Profile.alias)' has no identityFile." }
-    if (-not (Test-SrmPathWithinRoot -Path ([string]$Profile.identityFile) -Root $SshRoot)) { throw "identityFile for profile '$($Profile.alias)' must be under the SSH directory." }
-    if (-not $AllowMissingKey -and -not (Test-Path -LiteralPath ([string]$Profile.identityFile) -PathType Leaf)) { throw "Private key is missing for profile '$($Profile.alias)'." }
+    $connectionMode = Get-SrmConnectionMode -Profile $Profile
+    if ($connectionMode -notin @('managed', 'ssh-config-alias')) { throw "Invalid connectionMode for profile '$($Profile.alias)'." }
+    $identityProperty = $Profile.PSObject.Properties['identityFile']
+    $identityFile = if ($null -eq $identityProperty) { '' } else { [string]$identityProperty.Value }
+    if ($connectionMode -eq 'managed' -and [string]::IsNullOrWhiteSpace($identityFile)) { throw "Profile '$($Profile.alias)' has no identityFile." }
+    if (-not [string]::IsNullOrWhiteSpace($identityFile)) {
+        if (-not (Test-SrmPathWithinRoot -Path $identityFile -Root $SshRoot)) { throw "identityFile for profile '$($Profile.alias)' must be under the SSH directory." }
+        if (-not $AllowMissingKey -and -not (Test-Path -LiteralPath $identityFile -PathType Leaf)) { throw "Private key is missing for profile '$($Profile.alias)'." }
+    }
+    if ($connectionMode -eq 'ssh-config-alias') {
+        $aliasProperty = $Profile.PSObject.Properties['sshConfigAlias']
+        $sshConfigAlias = if ($null -eq $aliasProperty) { '' } else { [string]$aliasProperty.Value }
+        if ($sshConfigAlias -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') { throw "Invalid sshConfigAlias for profile '$($Profile.alias)'." }
+    }
     foreach ($service in @($Profile.allowlists.services)) {
         if ([string]$service -notmatch '^[A-Za-z0-9][A-Za-z0-9_.@:-]{0,127}$') { throw "Invalid allowed service '$service'." }
     }
@@ -166,6 +184,9 @@ function Test-SrmProfile {
 
 function ConvertTo-SrmCanonicalProfile {
     param([Parameter(Mandatory)]$Profile)
+    $connectionMode = Get-SrmConnectionMode -Profile $Profile
+    $identityProperty = $Profile.PSObject.Properties['identityFile']
+    $sshAliasProperty = $Profile.PSObject.Properties['sshConfigAlias']
     [pscustomobject]@{
         alias = [string]$Profile.alias
         displayName = [string]$Profile.displayName
@@ -173,7 +194,9 @@ function ConvertTo-SrmCanonicalProfile {
         port = [int]$Profile.port
         user = [string]$Profile.user
         environment = [string]$Profile.environment
-        identityFile = [string]$Profile.identityFile
+        connectionMode = $connectionMode
+        sshConfigAlias = if ($connectionMode -eq 'ssh-config-alias') { [string]$sshAliasProperty.Value } else { $null }
+        identityFile = if ($null -eq $identityProperty) { '' } else { [string]$identityProperty.Value }
         capabilities = [pscustomobject]@{
             serverInfo = [bool]$Profile.capabilities.serverInfo
             systemd = [bool]$Profile.capabilities.systemd
@@ -248,13 +271,14 @@ function Sync-SrmSshConfig {
     Invoke-SrmWithFileLock -LockPath "$SshConfigPath.lock" -TimeoutMilliseconds $LockTimeoutMilliseconds -ScriptBlock {
         $existing = if (Test-Path -LiteralPath $SshConfigPath) { [System.IO.File]::ReadAllText((ConvertTo-SrmFullPath $SshConfigPath)) } else { '' }
         $unmanaged = Remove-SrmManagedBlocks -Content $existing
+        $hadManagedBlocks = $unmanaged -cne $existing
         $unmanagedAliases = @(Get-SrmUnmanagedHostAliases -Content $unmanaged)
         foreach ($profile in @($store.profiles)) {
-            if (@($unmanagedAliases | Where-Object { $_ -ieq $profile.alias }).Count -gt 0) { throw "SSH config contains unmanaged Host '$($profile.alias)'." }
+            if ((Get-SrmConnectionMode -Profile $profile) -eq 'managed' -and @($unmanagedAliases | Where-Object { $_ -ieq $profile.alias }).Count -gt 0) { throw "SSH config contains unmanaged Host '$($profile.alias)'." }
         }
         $base = $unmanaged.TrimEnd("`r", "`n")
-        $blocks = @($store.profiles | Sort-Object alias | ForEach-Object { ConvertTo-SrmManagedBlock -Profile $_ })
-        $newContent = if ($base -and $blocks.Count) { $base + "`r`n`r`n" + ($blocks -join "`r`n`r`n") + "`r`n" } elseif ($blocks.Count) { ($blocks -join "`r`n`r`n") + "`r`n" } elseif ($base) { $base + "`r`n" } else { '' }
+        $blocks = @($store.profiles | Where-Object { (Get-SrmConnectionMode -Profile $_) -eq 'managed' } | Sort-Object alias | ForEach-Object { ConvertTo-SrmManagedBlock -Profile $_ })
+        $newContent = if (-not $hadManagedBlocks -and $blocks.Count -eq 0) { $existing } elseif ($base -and $blocks.Count) { $base + "`r`n`r`n" + ($blocks -join "`r`n`r`n") + "`r`n" } elseif ($blocks.Count) { ($blocks -join "`r`n`r`n") + "`r`n" } elseif ($base) { $base + "`r`n" } else { '' }
         if ($newContent -cne $existing) { Write-SrmAtomicText -Path $SshConfigPath -Content $newContent -Backup:([bool](Test-Path -LiteralPath $SshConfigPath)) }
     }
 }
@@ -343,7 +367,7 @@ function Import-SrmLegacyProfiles {
             if (-not [System.IO.Path]::IsPathRooted($identity)) { $identity = Join-Path $SshRoot $identity }
             $profile = [pscustomobject]@{
                 alias = $alias; displayName = $alias; host = $hostName; port = [int]$portText; user = $user
-                environment = 'development'; identityFile = $identity
+                environment = 'development'; connectionMode = 'managed'; sshConfigAlias = $null; identityFile = $identity
                 capabilities = [pscustomobject]@{ serverInfo = $true; systemd = $false; docker = $false; logs = $false }
                 allowlists = [pscustomobject]@{ services = @(); logTargets = @() }
                 lastTestedUtc = $null

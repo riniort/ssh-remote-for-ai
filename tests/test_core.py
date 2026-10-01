@@ -11,7 +11,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from server.core import ProfileStore, SrmError, SshRemoteService, SshRunner, redact
+from server.core import ProfileStore, SrmError, SshRemoteService, SshRunner, redact, sanitize_error
 
 
 def payload(identity: str = "~/.ssh/id_secret") -> dict:
@@ -75,6 +75,12 @@ class CoreTests(unittest.TestCase):
         self.assertNotIn("xyz", value)
         self.assertNotIn("u:p", value)
 
+    def test_error_sanitization_removes_private_key_paths(self) -> None:
+        value = sanitize_error(r"no such identity: C:\Users\alice\.ssh\prod-key: No such file")
+        self.assertNotIn("prod-key", value)
+        self.assertNotIn(r"C:\Users", value)
+        self.assertIn("[path]", value)
+
     def test_log_output_is_redacted(self) -> None:
         result = self.service.read_logs("dev-one", "api")
         combined = result["output"] + result["error"]
@@ -103,6 +109,23 @@ class CoreTests(unittest.TestCase):
         (self.home / "profiles.json").write_text(json.dumps(data), encoding="utf-8")
         method_names = {name for name in dir(self.service) if not name.startswith("_")}
         self.assertFalse(method_names & {"restart", "deploy", "execute", "shell", "migrate"})
+
+    def test_ssh_config_reference_uses_existing_target_alias(self) -> None:
+        data = payload("")
+        data["profiles"][0].update({"alias": "friendly-prod", "environment": "production",
+                                    "connectionMode": "ssh-config-alias",
+                                    "sshConfigAlias": "existing-prod", "identityFile": ""})
+        (self.home / "profiles.json").write_text(json.dumps(data), encoding="utf-8")
+        record = self.home / "reference-args.json"
+        with patch.dict(os.environ, {"FAKE_SSH_RECORD": str(record)}):
+            details = self.service.get_profile("friendly-prod")
+            result = self.service.test_connection("friendly-prod")
+        self.assertTrue(result["success"])
+        self.assertIsNone(details["keyReady"])
+        self.assertEqual(details["authSource"], "ssh-config")
+        self.assertNotIn("sshConfigAlias", details)
+        args = json.loads(record.read_text(encoding="utf-8"))
+        self.assertEqual(args[args.index("--") + 1], "existing-prod")
 
     def test_duplicate_alias_rejected_case_insensitively(self) -> None:
         data = payload()

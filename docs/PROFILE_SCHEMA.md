@@ -13,6 +13,8 @@
       "port": 22,
       "user": "deploy",
       "environment": "development",
+      "connectionMode": "managed",
+      "sshConfigAlias": null,
       "identityFile": "C:\\Users\\me\\.ssh\\ssh_remote_manager_dev-one",
       "capabilities": {
         "serverInfo": true,
@@ -33,6 +35,8 @@
 ```
 
 Aliases are 1–64 ASCII letters, digits, dot, underscore, or hyphen and cannot begin with an option prefix. Environment is exactly `development`, `staging`, or `production`. Service names and log target names use restricted character sets. Log paths are absolute, have no traversal segments, and are selected by name through MCP; callers cannot submit arbitrary paths.
+
+`connectionMode` defaults to `managed`. An imported operator-owned SSH entry uses `ssh-config-alias` plus a validated `sshConfigAlias`; in that mode `identityFile` may be empty because OpenSSH resolves authentication and routing from the existing config. SSH Remote Manager never rewrites that unmanaged entry, and MCP still accepts only the profile's public alias.
 
 The GUI writes JSON atomically under a lock, then generates only blocks delimited by:
 

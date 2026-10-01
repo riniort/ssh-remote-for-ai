@@ -47,6 +47,7 @@ The Phase 1 store uses `schemaVersion: 1` and profiles keyed by alias. Each prof
 
 - `alias`, `displayName`, `host`, `port`, `user`, and `environment`;
 - `identityFile`, a private-key path reference, never key content;
+- `connectionMode` (`managed` or `ssh-config-alias`) and optional `sshConfigAlias` for preserving an operator-owned SSH route without rewriting it;
 - `capabilities` with explicit `serverInfo`, `systemd`, `docker`, and `logs` grants;
 - `allowlists.services`, containing allowed service names;
 - `allowlists.logTargets`, approved `{name, path}` entries that map target names to fixed remote paths; and

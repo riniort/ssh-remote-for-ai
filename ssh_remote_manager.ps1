@@ -30,6 +30,8 @@ $ColorDanger = [System.Drawing.Color]::FromArgb(241, 83, 83)
 $script:KeyPath = ""
 $script:PublicKey = ""
 $script:SelectedAlias = ""
+$script:ConnectionMode = "managed"
+$script:SshConfigAlias = ""
 $script:Profiles = @()
 $script:ProfileStoreAvailable = $false
 $script:ProfileStoreWarning = ""
@@ -89,6 +91,8 @@ function Get-ManagedProfiles {
                 Capabilities = Get-PropertyValue $profile "capabilities" ([pscustomobject]@{})
                 Allowlists = Get-PropertyValue $profile "allowlists" ([pscustomobject]@{})
                 LastTestedUtc = [string](Get-PropertyValue $profile "lastTestedUtc" "")
+                ConnectionMode = [string](Get-PropertyValue $profile "connectionMode" "managed")
+                SshConfigAlias = [string](Get-PropertyValue $profile "sshConfigAlias" "")
                 Display = "$alias  [$($environment.ToUpperInvariant())]  |  $server"
             }
         }
@@ -119,6 +123,8 @@ function Get-ManagedProfiles {
             Capabilities = [pscustomobject]@{ serverInfo = $true; systemd = $false; docker = $false; logs = $false }
             Allowlists = [pscustomobject]@{ services = @(); logTargets = [pscustomobject]@{} }
             LastTestedUtc = ""
+            ConnectionMode = "managed"
+            SshConfigAlias = ""
             Display = if ($serverMatch.Success) { "$alias  |  $($serverMatch.Groups['value'].Value)" } else { $alias }
         }
     }
@@ -169,6 +175,8 @@ function Clear-ProfileEditor {
     $script:SelectedAlias = ""
     $script:KeyPath = ""
     $script:PublicKey = ""
+    $script:ConnectionMode = "managed"
+    $script:SshConfigAlias = ""
     $AliasBox.Text = ""
     $HostBox.Text = ""
     $UserBox.Text = "codex-keblm"
@@ -194,6 +202,8 @@ function Select-Profile {
     param($Profile)
     if ($null -eq $Profile) { return }
     $script:SelectedAlias = $Profile.Alias
+    $script:ConnectionMode = if ($Profile.ConnectionMode) { $Profile.ConnectionMode } else { "managed" }
+    $script:SshConfigAlias = $Profile.SshConfigAlias
     $AliasBox.Text = $Profile.Alias
     $DisplayNameBox.Text = $Profile.DisplayName
     $HostBox.Text = $Profile.Server
@@ -227,7 +237,12 @@ function Select-Profile {
     $LastTestedLabel.Text = if ($Profile.LastTestedUtc) { "Connection: last tested $($Profile.LastTestedUtc)" } else { "Connection: not tested" }
     $script:KeyPath = $Profile.KeyPath
     $publicKeyPath = "$script:KeyPath.pub"
-    if ($script:KeyPath -and (Test-Path -LiteralPath $publicKeyPath)) {
+    if ($script:ConnectionMode -eq "ssh-config-alias") {
+        $script:PublicKey = ""
+        $PublicKeyBox.Text = ""
+        $KeyStatusLabel.Text = "Authentication is managed by existing SSH Host '$script:SshConfigAlias'"
+        $KeyStatusLabel.ForeColor = $ColorAccent
+    } elseif ($script:KeyPath -and (Test-Path -LiteralPath $publicKeyPath)) {
         $script:PublicKey = (Get-Content -LiteralPath $publicKeyPath -Raw).Trim()
         $PublicKeyBox.Text = $script:PublicKey
         $KeyStatusLabel.Text = "Key ready: $publicKeyPath"
@@ -323,6 +338,8 @@ function New-ProfileRecord {
         port = $Values.Port
         user = $Values.User
         environment = $Values.Environment
+        connectionMode = $script:ConnectionMode
+        sshConfigAlias = if ($script:ConnectionMode -eq "ssh-config-alias") { $script:SshConfigAlias } else { $null }
         identityFile = $script:KeyPath
         capabilities = [pscustomobject][ordered]@{
             serverInfo = $ServerInfoCheck.Checked
@@ -339,6 +356,9 @@ function New-ProfileRecord {
 }
 
 function Ensure-SshKey {
+    if ($script:ConnectionMode -eq "ssh-config-alias") {
+        throw "This imported profile uses authentication from SSH Host '$script:SshConfigAlias'. Edit that SSH config entry if its key must change."
+    }
     $values = Get-ValidatedValues
     $sshFolder = Join-Path $env:USERPROFILE ".ssh"
     if (-not $script:KeyPath) {
@@ -384,10 +404,16 @@ function Get-RevokeCommand {
     return "tmp=`$(mktemp) && awk -v key='$script:PublicKey' '`$0 != key' ~/.ssh/authorized_keys > `"`$tmp`" && cat `"`$tmp`" > ~/.ssh/authorized_keys; rc=`$?; rm -f `"`$tmp`"; exit `$rc"
 }
 
+function Get-ConnectionTargetAlias {
+    param($Values)
+    if ($script:ConnectionMode -eq "ssh-config-alias") { return $script:SshConfigAlias }
+    return $Values.Alias
+}
+
 function Save-SshProfile {
     param([string]$LastTestedUtc = "")
     $values = Get-ValidatedValues
-    Ensure-SshKey
+    if ($script:ConnectionMode -ne "ssh-config-alias") { Ensure-SshKey }
 
     if ($script:ProfileStoreAvailable) {
         if (-not $LastTestedUtc -and $script:SelectedAlias) {
@@ -482,6 +508,9 @@ function Delete-SelectedProfile {
 function Delete-SelectedLocalKey {
     if (-not $script:SelectedAlias -or -not $script:KeyPath) {
         throw "Select a profile with a local key first."
+    }
+    if ($script:ConnectionMode -eq "ssh-config-alias") {
+        throw "This imported profile does not own its SSH config key. Manage that key outside SSH Remote Manager."
     }
     $sshRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE ".ssh"))
     $keyFullPath = [System.IO.Path]::GetFullPath($script:KeyPath)
@@ -599,16 +628,17 @@ function Show-ImportSshHostDialog {
     if ($dialog.ShowDialog($Form) -ne [System.Windows.Forms.DialogResult]::OK) { return }
     $entry = $dialog.Tag
     Clear-ProfileEditor
-    $AliasBox.Text = "$($entry.Alias)-managed"
+    $script:ConnectionMode = "ssh-config-alias"
+    $script:SshConfigAlias = [string]$entry.Alias
+    $AliasBox.Text = $entry.Alias
     $DisplayNameBox.Text = $entry.Alias
     $HostBox.Text = if ($entry.Server) { $entry.Server } else { $entry.Alias }
     if ($entry.User) { $UserBox.Text = $entry.User }
     $PortBox.Text = $entry.Port
-    if ($entry.KeyPath) {
-        $expandedPath = $entry.KeyPath.Replace('~', (Join-Path $env:USERPROFILE ''))
-        $script:KeyPath = [Environment]::ExpandEnvironmentVariables($expandedPath)
-    }
-    $SavedStatusLabel.Text = "Loaded unmanaged Host '$($entry.Alias)' read-only. Review the new alias before saving; the original SSH config entry is not changed."
+    $script:KeyPath = ""
+    $KeyStatusLabel.Text = "Authentication will remain managed by existing SSH Host '$($entry.Alias)'"
+    $KeyStatusLabel.ForeColor = $ColorAccent
+    $SavedStatusLabel.Text = "Ready to import Host '$($entry.Alias)' by reference. Saving will not rewrite the original SSH config entry."
     $SavedStatusLabel.ForeColor = $ColorWarning
 }
 
@@ -1124,6 +1154,7 @@ $SaveButton.Add_Click({
 $TestButton.Add_Click({
     try {
         $values = Get-ValidatedValues
+        $targetAlias = Get-ConnectionTargetAlias $values
         Save-SshProfile
         if ($values.Environment -eq "production") {
             $answer = [System.Windows.Forms.MessageBox]::Show(
@@ -1135,7 +1166,7 @@ $TestButton.Add_Click({
             )
             if ($answer -ne [System.Windows.Forms.DialogResult]::Yes) { return }
         }
-        $output = & ssh.exe -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=8 -o ConnectionAttempts=1 -- $values.Alias true 2>&1
+        $output = & ssh.exe -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=8 -o ConnectionAttempts=1 -- $targetAlias true 2>&1
         $outputText = ($output | Out-String)
         if ($outputText.Length -gt 4096) { $outputText = $outputText.Substring(0, 4096) + "`n[output truncated]" }
         if ($LASTEXITCODE -eq 0) {
@@ -1154,6 +1185,7 @@ $TestButton.Add_Click({
 $OpenTerminalButton.Add_Click({
     try {
         $values = Get-ValidatedValues
+        $targetAlias = Get-ConnectionTargetAlias $values
         if ($values.Environment -eq "production") {
             $answer = [System.Windows.Forms.MessageBox]::Show(
                 $Form,
@@ -1164,7 +1196,7 @@ $OpenTerminalButton.Add_Click({
             )
             if ($answer -ne [System.Windows.Forms.DialogResult]::Yes) { return }
         }
-        Start-Process -FilePath "ssh.exe" -ArgumentList @($values.Alias)
+        Start-Process -FilePath "ssh.exe" -ArgumentList @($targetAlias)
     } catch {
         Show-Message $_.Exception.Message "SSH Remote Manager Error" ([System.Windows.Forms.MessageBoxIcon]::Error)
     }
