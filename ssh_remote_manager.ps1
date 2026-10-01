@@ -751,7 +751,7 @@ $TitleLabel.ForeColor = $ColorText
 $Form.Controls.Add($TitleLabel)
 
 $HelpLabel = New-Object System.Windows.Forms.Label
-$HelpLabel.Text = "Secure connection profiles · separate keys · no stored passwords"
+$HelpLabel.Text = "Secure connection profiles | separate keys | no stored passwords"
 $HelpLabel.AutoSize = $true
 $HelpLabel.ForeColor = $ColorMuted
 $HelpLabel.Location = New-Object System.Drawing.Point(296, 58)
@@ -854,16 +854,16 @@ function Add-Field {
     return $box
 }
 
-$AliasBox = Add-Field "Local alias" "keblm-remote" 92 195
-$DisplayNameBox = Add-Field "Display name" "" 92 195 526
-$HostBox = Add-Field "Server IP or domain" "" 158 700
+$AliasBox = Add-Field "Local alias" "keblm-remote" 92 170
+$DisplayNameBox = Add-Field "Display name" "" 92 170 536
+$HostBox = Add-Field "Server IP or domain" "" 158 714
 $UserBox = Add-Field "SSH username (use a limited account)" "codex-keblm" 224 225
-$PortBox = Add-Field "SSH port" "22" 224 150 561
+$PortBox = Add-Field "SSH port" "22" 224 100 610
 
 $EnvironmentLabel = New-Object System.Windows.Forms.Label
 $EnvironmentLabel.Text = "Environment"
 $EnvironmentLabel.AutoSize = $true
-$EnvironmentLabel.Location = New-Object System.Drawing.Point(801, 92)
+$EnvironmentLabel.Location = New-Object System.Drawing.Point(780, 92)
 $EnvironmentLabel.ForeColor = $ColorMuted
 $Form.Controls.Add($EnvironmentLabel)
 
@@ -871,8 +871,8 @@ $EnvironmentBox = New-Object System.Windows.Forms.ComboBox
 $EnvironmentBox.DropDownStyle = "DropDownList"
 [void]$EnvironmentBox.Items.AddRange(@("development", "staging", "production"))
 $EnvironmentBox.SelectedItem = "development"
-$EnvironmentBox.Location = New-Object System.Drawing.Point(801, 116)
-$EnvironmentBox.Size = New-Object System.Drawing.Size(165, 30)
+$EnvironmentBox.Location = New-Object System.Drawing.Point(780, 116)
+$EnvironmentBox.Size = New-Object System.Drawing.Size(175, 30)
 $EnvironmentBox.BackColor = $ColorSurface
 $EnvironmentBox.ForeColor = $ColorText
 $Form.Controls.Add($EnvironmentBox)
@@ -881,14 +881,14 @@ $EnvironmentBadge = New-Object System.Windows.Forms.Label
 $EnvironmentBadge.Text = "DEVELOPMENT"
 $EnvironmentBadge.TextAlign = "MiddleCenter"
 $EnvironmentBadge.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 9)
-$EnvironmentBadge.Location = New-Object System.Drawing.Point(975, 116)
-$EnvironmentBadge.Size = New-Object System.Drawing.Size(115, 27)
+$EnvironmentBadge.Location = New-Object System.Drawing.Point(965, 116)
+$EnvironmentBadge.Size = New-Object System.Drawing.Size(125, 27)
 $Form.Controls.Add($EnvironmentBadge)
 
 $EnvironmentWarningLabel = New-Object System.Windows.Forms.Label
 $EnvironmentWarningLabel.AutoSize = $true
-$EnvironmentWarningLabel.MaximumSize = New-Object System.Drawing.Size(390, 38)
-$EnvironmentWarningLabel.Location = New-Object System.Drawing.Point(700, 48)
+$EnvironmentWarningLabel.MaximumSize = New-Object System.Drawing.Size(320, 38)
+$EnvironmentWarningLabel.Location = New-Object System.Drawing.Point(770, 54)
 $EnvironmentWarningLabel.ForeColor = $ColorMuted
 $Form.Controls.Add($EnvironmentWarningLabel)
 
@@ -925,12 +925,13 @@ function Add-PasteButton {
     param(
         [System.Windows.Forms.TextBox]$Target,
         [int]$Left,
-        [int]$Top
+        [int]$Top,
+        [int]$Width = 70
     )
     $button = New-Object System.Windows.Forms.Button
     $button.Text = "Paste"
     $button.Location = New-Object System.Drawing.Point($Left, $Top)
-    $button.Size = New-Object System.Drawing.Size(70, 30)
+    $button.Size = New-Object System.Drawing.Size($Width, 30)
     $button.Tag = $Target
     $button.Add_Click({
         param($sender, $eventArgs)
@@ -953,13 +954,13 @@ function Add-PasteButton {
     return $button
 }
 
-$PasteAliasButton = Add-PasteButton $AliasBox 501 116
-$PasteDisplayNameButton = Add-PasteButton $DisplayNameBox 731 116
-$PasteHostButton = Add-PasteButton $HostBox 1006 182
-$PasteUserButton = Add-PasteButton $UserBox 531 248
-$PastePortButton = Add-PasteButton $PortBox 721 248
+$PasteAliasButton = Add-PasteButton $AliasBox 472 116 54
+$PasteDisplayNameButton = Add-PasteButton $DisplayNameBox 712 116 54
+$PasteHostButton = Add-PasteButton $HostBox 1018 182 72
+$PasteUserButton = Add-PasteButton $UserBox 529 248 64
+$PastePortButton = Add-PasteButton $PortBox 718 248 64
 $PasteServicesButton = Add-PasteButton $ServicesBox 591 374
-$PasteLogTargetsButton = Add-PasteButton $LogTargetsBox 1026 374
+$PasteLogTargetsButton = Add-PasteButton $LogTargetsBox 1018 374 72
 
 $GenerateButton = New-Object System.Windows.Forms.Button
 $GenerateButton.Text = "1. Generate / show key"
