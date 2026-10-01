@@ -42,7 +42,7 @@ Private-key content must never be:
 - captured in test snapshots, exception messages, telemetry, or diagnostic bundles; or
 - sent to an AI model.
 
-The SSH client is given only the configured key path through the generated SSH config. File permissions should grant access only to the owning user and required system principals. Public keys are not secrets, but their display/copy/install/revoke workflows remain explicit because they grant access when installed remotely.
+The SSH client is given only the configured key path through the generated SSH config. During an explicit import, the GUI checks the OpenSSH header and uses local `ssh-keygen` to verify that the companion public key matches; private-key body content is never displayed, logged, transmitted, or written to profile JSON. Imported files are copied under the managed `.ssh` directory. Public keys are normalized to the key type and base64 payload before they enter copied shell commands; optional untrusted comments are discarded. File permissions should grant access only to the owning user and required system principals. Public keys are not secrets, but their display/copy/install/revoke workflows remain explicit because they grant access when installed remotely.
 
 ## Command execution controls
 
