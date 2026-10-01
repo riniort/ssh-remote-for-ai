@@ -72,6 +72,21 @@ function Get-SrmPublicKeyPath {
     return $candidates[0]
 }
 
+function ConvertTo-SrmPublicKey {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Value)
+
+    $trimmed = $Value.Trim()
+    $keyType = '(?:ssh-(?:ed25519|rsa)|ecdsa-sha2-[A-Za-z0-9@._+-]+|sk-(?:ssh-ed25519|ecdsa-sha2-[A-Za-z0-9@._+-]+)@[A-Za-z0-9._-]+)'
+    if ($trimmed -notmatch "^(?<type>$keyType)[ `t]+(?<blob>[A-Za-z0-9+/]+={0,3})(?:[ `t]+[^`r`n]*)?$") {
+        throw 'The public key has an unsupported OpenSSH format.'
+    }
+    # Comments are optional metadata and are not needed for authentication.
+    # Dropping them also prevents shell metacharacters from reaching the
+    # explicit install/revoke commands copied by the GUI.
+    "$($Matches.type) $($Matches.blob)"
+}
+
 function Invoke-SrmWithFileLock {
     param(
         [Parameter(Mandatory)][string]$LockPath,
@@ -425,4 +440,4 @@ function Import-SrmLegacyProfiles {
     @($imported)
 }
 
-Export-ModuleMember -Function Get-SrmProfileStore, Get-SrmProfiles, Get-SrmProfile, Get-SrmPublicKeyPath, Test-SrmProfile, Save-SrmProfile, Remove-SrmProfile, Sync-SrmSshConfig, Import-SrmLegacyProfiles
+Export-ModuleMember -Function Get-SrmProfileStore, Get-SrmProfiles, Get-SrmProfile, Get-SrmPublicKeyPath, ConvertTo-SrmPublicKey, Test-SrmProfile, Save-SrmProfile, Remove-SrmProfile, Sync-SrmSshConfig, Import-SrmLegacyProfiles

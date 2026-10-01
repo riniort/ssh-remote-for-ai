@@ -60,6 +60,19 @@ function Get-PropertyValue {
     return $property.Value
 }
 
+function ConvertTo-NormalizedPublicKey {
+    param([Parameter(Mandatory)][string]$Value)
+    if ($script:ProfileStoreAvailable -and $null -ne (Get-Command ConvertTo-SrmPublicKey -ErrorAction SilentlyContinue)) {
+        return ConvertTo-SrmPublicKey -Value $Value
+    }
+    $trimmed = $Value.Trim()
+    $keyType = '(?:ssh-(?:ed25519|rsa)|ecdsa-sha2-[A-Za-z0-9@._+-]+|sk-(?:ssh-ed25519|ecdsa-sha2-[A-Za-z0-9@._+-]+)@[A-Za-z0-9._-]+)'
+    if ($trimmed -notmatch "^(?<type>$keyType)[ `t]+(?<blob>[A-Za-z0-9+/]+={0,3})(?:[ `t]+[^`r`n]*)?$") {
+        throw 'The public key has an unsupported OpenSSH format.'
+    }
+    return "$($Matches.type) $($Matches.blob)"
+}
+
 function Get-SshConfigPath {
     return Join-Path (Join-Path $env:USERPROFILE ".ssh") "config"
 }
@@ -247,7 +260,8 @@ function Select-Profile {
         $KeyStatusLabel.Text = "Authentication is managed by existing SSH Host '$script:SshConfigAlias'"
         $KeyStatusLabel.ForeColor = $ColorAccent
     } elseif ($script:KeyPath -and (Test-Path -LiteralPath $publicKeyPath)) {
-        $script:PublicKey = (Get-Content -LiteralPath $publicKeyPath -Raw).Trim()
+        $rawPublicKey = Get-Content -LiteralPath $publicKeyPath -Raw
+        $script:PublicKey = ConvertTo-NormalizedPublicKey -Value $rawPublicKey
         $PublicKeyBox.Text = $script:PublicKey
         $KeyStatusLabel.Text = "Key ready: $publicKeyPath"
         $KeyStatusLabel.ForeColor = $ColorSuccess
@@ -389,10 +403,8 @@ function Ensure-SshKey {
         throw "Private key exists but its public key is missing: $publicKeyPath"
     }
 
-    $script:PublicKey = (Get-Content -LiteralPath $publicKeyPath -Raw).Trim()
-    if ($script:PublicKey -notmatch '^(?:ssh-(?:ed25519|rsa)|ecdsa-sha2-[A-Za-z0-9@._+-]+|sk-(?:ssh-ed25519|ecdsa-sha2-[A-Za-z0-9@._+-]+)@[A-Za-z0-9._-]+) [A-Za-z0-9+/=]+(?: .+)?$') {
-        throw "The public key has an unsupported OpenSSH format."
-    }
+    $rawPublicKey = Get-Content -LiteralPath $publicKeyPath -Raw
+    $script:PublicKey = ConvertTo-NormalizedPublicKey -Value $rawPublicKey
     $PublicKeyBox.Text = $script:PublicKey
     $KeyStatusLabel.Text = "Key ready: $publicKeyPath"
     $KeyStatusLabel.ForeColor = $ColorSuccess
@@ -433,10 +445,8 @@ function Import-OpenSshKeyPair {
     if (($publicItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
         throw "The selected public key cannot be a symlink, junction, or reparse point."
     }
-    $publicKey = (Get-Content -LiteralPath $sourcePublic -Raw).Trim()
-    if ($publicKey -notmatch '^(?:ssh-(?:ed25519|rsa)|ecdsa-sha2-[A-Za-z0-9@._+-]+|sk-(?:ssh-ed25519|ecdsa-sha2-[A-Za-z0-9@._+-]+)@[A-Za-z0-9._-]+) [A-Za-z0-9+/=]+(?: .+)?$') {
-        throw "The companion public key has an unsupported OpenSSH format."
-    }
+    $rawPublicKey = Get-Content -LiteralPath $sourcePublic -Raw
+    $publicKey = ConvertTo-NormalizedPublicKey -Value $rawPublicKey
 
     $sshKeygen = Get-Command ssh-keygen -ErrorAction Stop
     $derivedOutput = & $sshKeygen.Source -y -P "" -f $sourcePrivate 2>$null

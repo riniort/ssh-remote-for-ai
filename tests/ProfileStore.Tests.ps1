@@ -202,6 +202,14 @@ Host neutral
         (Get-SrmPublicKeyPath -IdentityFile $privatePath) | Should Be ([System.IO.Path]::GetFullPath($publicPath))
     }
 
+    It 'normalizes public keys and removes untrusted comments before shell command use' {
+        (ConvertTo-SrmPublicKey -Value "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ== operator@example") |
+            Should Be 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ=='
+        (ConvertTo-SrmPublicKey -Value "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA== '; reboot; #") |
+            Should Be 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA=='
+        Assert-Throws { ConvertTo-SrmPublicKey -Value "ssh-rsa AAAATEST`nmalicious" }
+    }
+
     It 'rejects secret-bearing profile properties' {
         $profile = New-TestProfile
         $profile | Add-Member -NotePropertyName password -NotePropertyValue 'must-not-persist'
