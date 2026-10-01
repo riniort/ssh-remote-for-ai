@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
 import os
 import re
 import subprocess
 import threading
 import time
+import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -132,39 +136,142 @@ class ProfileStore:
 
 class AuditLog:
     _lock = threading.Lock()
+    ZERO_HASH = "0" * 64
 
     def __init__(self, home: Path, max_bytes: int = 2_000_000):
         self.path = home / "audit.jsonl"
+        self.lock_path = home / "audit.lock"
         self.max_bytes = max_bytes
 
+    @contextmanager
+    def _process_lock(self, timeout_seconds: float = 5.0):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        handle = self.lock_path.open("a+b")
+        try:
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            deadline = time.monotonic() + timeout_seconds
+            while True:
+                try:
+                    if os.name == "nt":
+                        import msvcrt
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    else:
+                        import fcntl
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except (OSError, BlockingIOError):
+                    if time.monotonic() >= deadline:
+                        raise SrmError("Timed out waiting for the audit lock.")
+                    time.sleep(0.025)
+            yield
+        finally:
+            try:
+                handle.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+            handle.close()
+
+    def _records_unlocked(self) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        for path in (self.path.with_suffix(".jsonl.1"), self.path):
+            if not path.exists():
+                continue
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    value = json.loads(line)
+                    if not isinstance(value, dict):
+                        raise ValueError("audit record is not an object")
+                    records.append(value)
+        return records
+
+    @classmethod
+    def _record_hash(cls, entry: dict[str, Any]) -> str:
+        canonical = json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _archive_legacy_unlocked(self) -> None:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        for index, path in enumerate((self.path.with_suffix(".jsonl.1"), self.path)):
+            if path.exists():
+                os.replace(path, self.path.with_name(f"audit.legacy.{stamp}.{index}.jsonl"))
+
     def append(self, *, tool: str, profile: dict[str, Any] | None, duration_ms: int,
-               category: str, success: bool, agent: str = "mcp") -> None:
-        entry = {
-            "timestampUtc": utc_now(), "agent": agent, "tool": tool,
-            "profileAlias": profile.get("alias") if profile else None,
-            "environment": profile.get("environment") if profile else None,
-            "durationMs": max(0, int(duration_ms)), "exitCategory": category,
-            "success": bool(success),
-        }
-        line = json.dumps(entry, separators=(",", ":"), ensure_ascii=True) + "\n"
+               category: str, success: bool, agent: str = "mcp",
+               request_id: str | None = None) -> None:
         with self._lock:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            if self.path.exists() and self.path.stat().st_size + len(line) > self.max_bytes:
-                rotated = self.path.with_suffix(".jsonl.1")
-                os.replace(self.path, rotated)
-            with self.path.open("a", encoding="utf-8", newline="\n") as handle:
-                handle.write(line)
+            with self._process_lock():
+                records = self._records_unlocked()
+                if records and ("hash" not in records[-1] or "sequence" not in records[-1]):
+                    self._archive_legacy_unlocked()
+                    records = []
+                previous = records[-1] if records else None
+                entry = {
+                    "sequence": int(previous["sequence"]) + 1 if previous else 0,
+                    "timestampUtc": utc_now(), "requestId": request_id or uuid.uuid4().hex,
+                    "agent": agent, "tool": tool,
+                    "profileAlias": profile.get("alias") if profile else None,
+                    "environment": profile.get("environment") if profile else None,
+                    "durationMs": max(0, int(duration_ms)), "exitCategory": category,
+                    "success": bool(success), "prevHash": previous["hash"] if previous else self.ZERO_HASH,
+                }
+                entry["hash"] = self._record_hash(entry)
+                line = json.dumps(entry, separators=(",", ":"), ensure_ascii=True) + "\n"
+                if self.path.exists() and self.path.stat().st_size + len(line.encode("utf-8")) > self.max_bytes:
+                    rotated = self.path.with_suffix(".jsonl.1")
+                    os.replace(self.path, rotated)
+                with self.path.open("a", encoding="utf-8", newline="\n") as handle:
+                    handle.write(line)
+                    handle.flush()
+                    os.fsync(handle.fileno())
 
     def recent(self, limit: int) -> list[dict[str, Any]]:
-        if not self.path.exists():
-            return []
         try:
-            lines = self.path.read_text(encoding="utf-8").splitlines()[-limit:]
-            allowed = {"timestampUtc", "agent", "tool", "profileAlias", "environment",
-                       "durationMs", "exitCategory", "success"}
-            return [{k: v for k, v in json.loads(line).items() if k in allowed} for line in lines]
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            with self._lock:
+                with self._process_lock():
+                    records = self._records_unlocked()[-limit:]
+            allowed = {"sequence", "timestampUtc", "requestId", "agent", "tool", "profileAlias",
+                       "environment", "durationMs", "exitCategory", "success"}
+            return [{k: v for k, v in record.items() if k in allowed} for record in records]
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
             raise SrmError("Audit log is unavailable or invalid.") from exc
+
+    def verify(self) -> dict[str, Any]:
+        try:
+            with self._lock:
+                with self._process_lock():
+                    records = self._records_unlocked()
+            previous_hash: str | None = None
+            previous_sequence: int | None = None
+            for index, record in enumerate(records):
+                supplied_hash = record.get("hash")
+                sequence = record.get("sequence")
+                if not isinstance(supplied_hash, str) or not isinstance(sequence, int):
+                    return {"valid": False, "recordsChecked": index, "error": "legacy_or_invalid_record"}
+                if previous_hash is not None and record.get("prevHash") != previous_hash:
+                    return {"valid": False, "recordsChecked": index, "error": "broken_hash_link"}
+                if previous_sequence is not None and sequence != previous_sequence + 1:
+                    return {"valid": False, "recordsChecked": index, "error": "broken_sequence"}
+                unsigned = {k: v for k, v in record.items() if k != "hash"}
+                expected = self._record_hash(unsigned)
+                if not hmac.compare_digest(supplied_hash, expected):
+                    return {"valid": False, "recordsChecked": index, "error": "record_hash_mismatch"}
+                previous_hash, previous_sequence = supplied_hash, sequence
+            return {"valid": True, "recordsChecked": len(records),
+                    "firstSequence": records[0]["sequence"] if records else None,
+                    "lastSequence": records[-1]["sequence"] if records else None,
+                    "lastHash": records[-1]["hash"] if records else self.ZERO_HASH}
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+            return {"valid": False, "recordsChecked": 0, "error": "audit_unreadable"}
 
 
 @dataclass
@@ -366,3 +473,6 @@ class SshRemoteService:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
             raise SrmError("limit must be an integer from 1 to 100.")
         return self.audit.recent(limit)
+
+    def audit_verify(self) -> dict[str, Any]:
+        return self.audit.verify()

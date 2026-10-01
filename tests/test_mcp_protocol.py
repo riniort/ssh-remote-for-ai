@@ -49,6 +49,7 @@ class McpProtocolTests(unittest.TestCase):
                 ("ssh_service_status", {"alias": "dev-one", "service": "api"}),
                 ("ssh_read_logs", {"alias": "dev-one", "target": "api", "lines": 5}),
                 ("ssh_audit_recent", {"limit": 20}),
+                ("ssh_audit_verify", {}),
             ]
             for index, (name, args) in enumerate(tools, 3):
                 replies.append(call(index, "tools/call", {"name": name, "arguments": args}))

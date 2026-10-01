@@ -13,3 +13,4 @@ description: Safely inspect servers through the SSH Remote Manager MCP using con
 6. Stop if the requested service or log target is not allowlisted. Ask the user to update policy in the GUI.
 7. Do not attempt raw commands, shells, deploys, restarts, migrations, or configuration changes. Phase 1 has no mutation tools.
 8. Report sanitized errors and the affected environment clearly. Do not work around strict host-key failures.
+9. Use `ssh_audit_verify` when audit integrity matters; a failed verification requires human review before trusting recent records.

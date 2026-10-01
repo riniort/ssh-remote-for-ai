@@ -122,6 +122,7 @@ Phase 1 tools are:
 - `ssh_service_status`: fixed read-only systemd or Docker inspection for an allowed service;
 - `ssh_read_logs`: a bounded read of an allowed named target, never an arbitrary path;
 - `ssh_audit_recent`: recent local metadata-only audit events.
+- `ssh_audit_verify`: verify the retained audit sequence and SHA-256 hash chain.
 
 Remote operation templates are constants in code. Service names and log targets select predeclared templates; they are never concatenated into an unconstrained shell expression. Numeric options such as line counts are parsed as integers and clamped. All remote commands include an option terminator or equivalent positional protection where supported.
 
@@ -133,9 +134,11 @@ Output limits are enforced on bytes read, not only after collecting complete out
 
 ## Audit architecture
 
-Audit records are append-only JSON Lines at `%USERPROFILE%\.ssh\ssh-remote-manager\audit.jsonl`. Each event contains UTC timestamp, tool, profile alias, environment, duration, success/failure, and an exit category. Optional fields are limited to request-safe values such as a named service or log target after validation.
+Audit records are append-only JSON Lines at `%USERPROFILE%\.ssh\ssh-remote-manager\audit.jsonl`. A cross-process lock serializes append, rotation, reads, and verification. Each event contains a monotonic sequence, request ID, UTC timestamp, tool, profile alias, environment, duration, success/failure, exit category, previous hash, and its own SHA-256 hash. Optional fields are limited to request-safe values such as a named service or log target after validation.
 
 Audit does not contain full command lines, remote stdout/stderr, private-key paths or contents, passwords, tokens, connection strings, or environment dumps. Rotation uses configured size and retention bounds and preserves complete JSONL records. Audit reading applies the same schema filter and redaction as audit writing.
+
+The hash chain is tamper-evident, not a digital signature. A same-user attacker who can replace the complete retained log can recompute a new chain; external anchoring remains a future option.
 
 ## Host-key onboarding
 

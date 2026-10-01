@@ -60,6 +60,11 @@ TOOLS = [
             "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}},
             "additionalProperties": False},
     },
+    {
+        "name": "ssh_audit_verify",
+        "description": "Verify the local audit sequence and SHA-256 hash chain without returning command output.",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
 ]
 
 
@@ -82,6 +87,8 @@ def dispatch(service: SshRemoteService, name: str, arguments: dict[str, Any]) ->
                                  arguments.get("lines", 100))
     if name == "ssh_audit_recent":
         return service.audit_recent(arguments.get("limit", 20))
+    if name == "ssh_audit_verify":
+        return service.audit_verify()
     raise SrmError("Unknown tool.")
 
 
@@ -125,7 +132,7 @@ def handle(service: SshRemoteService, request: dict[str, Any]) -> dict[str, Any]
                 result = _content({"error": str(exc)}, True)
                 category, success = "policy_or_input_error", False
             finally:
-                if tool != "ssh_audit_recent":
+                if tool not in {"ssh_audit_recent", "ssh_audit_verify"}:
                     service.audit.append(tool=str(tool), profile=profile,
                                          duration_ms=round((time.monotonic() - started) * 1000),
                                          category=category, success=success)

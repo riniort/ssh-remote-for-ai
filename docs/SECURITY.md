@@ -83,7 +83,9 @@ Sanitized errors contain the minimum needed to act: category, profile alias when
 
 ## Audit and retention
 
-The local append-only `%USERPROFILE%\.ssh\ssh-remote-manager\audit.jsonl` records UTC timestamp, tool, profile alias, environment, duration, outcome, and exit category. It never records full remote output, complete command arguments, environment variables, or secrets. A validated service/log target name may be recorded, but its mapped remote path is not necessary.
+The local append-only `%USERPROFILE%\.ssh\ssh-remote-manager\audit.jsonl` records a sequence, request ID, UTC timestamp, tool, profile alias, environment, duration, outcome, exit category, previous hash, and record hash. Cross-process locking prevents concurrent MCP instances from interleaving JSONL writes. It never records full remote output, complete command arguments, environment variables, or secrets. A validated service/log target name may be recorded, but its mapped remote path is not necessary.
+
+`ssh_audit_verify` recalculates the retained SHA-256 chain and sequence. This detects ordinary modification, insertion, reordering, and removal from the middle, but it is not nonrepudiation: a process with the same local-user authority can replace the entire log and recompute hashes unless the chain head is anchored externally.
 
 Rotation happens at a configured size and retention period. Rotated files inherit restrictive permissions. Rotation and append operations are synchronized so concurrent tool calls do not interleave or truncate JSON records. Audit integrity is best-effort local accountability, not tamper-proof evidence: a user or malware with the same privileges may alter it.
 
@@ -120,6 +122,6 @@ The following risks remain even with the controls above:
 - Server-side command semantics and permissions can change after a profile is approved.
 - Backups of SSH config and rotated audits increase the number of local files requiring permission and retention hygiene.
 - SSH agent forwarding, port forwarding, ProxyCommand-like behavior, and risky unmanaged config can change the effective connection behavior. Managed profiles should disable unnecessary forwarding and reject unsafe directives in imported material.
-- Local audit is not cryptographically tamper-evident.
+- Local audit is tamper-evident within the retained chain but has no external signed anchor.
 
 These are documented design constraints, not invitations to silently expand scope. Security-sensitive changes belong in the Phase 2 review process.

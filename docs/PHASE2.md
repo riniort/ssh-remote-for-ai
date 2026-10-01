@@ -12,7 +12,7 @@ Phase 2 work should begin only after Phase 1 has passed protocol, security, migr
 
 - Split policy administration from ordinary profile metadata and optionally sign or protect policy with an OS-backed mechanism.
 - Add restrictive ACL verification/repair for the state, key, backup, and audit paths.
-- Add tamper-evident audit chaining and optional export to an owner-controlled sink. Export must remain metadata-only.
+- Add optional metadata-only export and signed/external anchoring for the existing local audit hash chain.
 - Pin or verify the selected OpenSSH executable and packaged dependencies.
 - Add explicit concurrency/rate budgets per profile and per tool.
 

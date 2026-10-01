@@ -69,6 +69,7 @@ Uninstall removes only the installed plugin and marketplace entry. Profiles, aud
 | `ssh_service_status` | Read allowlisted systemd/Docker service status |
 | `ssh_read_logs` | Read a bounded tail from a named allowlisted log target |
 | `ssh_audit_recent` | Read sanitized local audit metadata |
+| `ssh_audit_verify` | Verify audit sequence and SHA-256 hash-chain integrity |
 
 Example requests:
 
@@ -79,6 +80,8 @@ Production: inspect prod-one metadata first, then read the exact allowlisted api
 ```
 
 Agents are instructed to list profiles first, verify environment, use the narrowest read-only tool, never guess an alias/service/path, and never seek private keys.
+
+Audit writes are serialized across MCP processes. Each record contains a sequence number, request ID, previous hash, and its own SHA-256 hash. `ssh_audit_verify` detects modified, removed-from-the-middle, inserted, or reordered records within the retained log window. A pre-hardening audit is preserved as `audit.legacy.*.jsonl` before a new chain starts.
 
 ## Tests
 
