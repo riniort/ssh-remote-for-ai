@@ -33,7 +33,7 @@ flowchart LR
     Config -->|"IdentityFile path"| Keys
 ```
 
-The MCP boundary is deliberately narrower than the GUI boundary. MCP can observe approved metadata and invoke fixed read-only probes. It cannot create, rename, delete, or export profiles or keys. The OpenSSH process may read a private key by path as part of authentication; neither the GUI nor MCP reads the key bytes for transport, display, telemetry, or audit.
+The MCP boundary is deliberately narrower than the GUI boundary. MCP can observe approved metadata and invoke fixed read-only probes. It cannot create, rename, delete, or export profiles or keys. The OpenSSH process may read a private key by path as part of authentication. During an explicit local key-pair import, the GUI reads only the format header and asks the local `ssh-keygen` executable to derive the public key for pair verification; it never displays, transports, logs, or stores private-key content in profile metadata or audit data. MCP never reads private-key content.
 
 ## Canonical local state
 
@@ -55,7 +55,7 @@ The Phase 1 store uses `schemaVersion: 1` and profiles keyed by alias. Each prof
 
 Every profile must declare exactly one environment: `development`, `staging`, or `production`. Missing or unknown environments fail closed. Capabilities and allowlists are grants, not hints: absence means denial.
 
-Private keys stay below the resolved user `~/.ssh` directory. The application validates that a key path resolves inside that directory and is not a directory, device, symlink escape, or command-line option. Public-key material may be displayed or copied for onboarding, but public and private material are always handled as different data classes.
+Private keys stay below the resolved user `~/.ssh` directory. Imported key pairs are verified locally and copied into a managed subdirectory before use. The application validates that a key path resolves inside the SSH directory and is not a directory, device, symlink escape, or command-line option. Public-key material may be displayed or copied for onboarding, but public and private material are always handled as different data classes. Companion resolution supports both `id_rsa` + `id_rsa.pub` and extension-bearing private files such as `rsa.txt` + `rsa.pub`.
 
 ## Managed SSH config boundary
 

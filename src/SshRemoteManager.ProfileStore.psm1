@@ -50,6 +50,28 @@ function Test-SrmPathHasReparsePoint {
     return $false
 }
 
+function Get-SrmPublicKeyPath {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$IdentityFile)
+
+    $identityPath = ConvertTo-SrmFullPath $IdentityFile
+    $extension = [System.IO.Path]::GetExtension($identityPath)
+    $candidates = New-Object System.Collections.Generic.List[string]
+
+    # OpenSSH does not care about the private-key filename extension. For an
+    # imported key such as rsa.txt, prefer the conventional sibling rsa.pub.
+    if ($extension -and $extension -ine '.pub') {
+        $candidates.Add([System.IO.Path]::ChangeExtension($identityPath, '.pub'))
+    }
+    $appendedPath = "$identityPath.pub"
+    if (-not $candidates.Contains($appendedPath)) { $candidates.Add($appendedPath) }
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    }
+    return $candidates[0]
+}
+
 function Invoke-SrmWithFileLock {
     param(
         [Parameter(Mandatory)][string]$LockPath,
@@ -403,4 +425,4 @@ function Import-SrmLegacyProfiles {
     @($imported)
 }
 
-Export-ModuleMember -Function Get-SrmProfileStore, Get-SrmProfiles, Get-SrmProfile, Test-SrmProfile, Save-SrmProfile, Remove-SrmProfile, Sync-SrmSshConfig, Import-SrmLegacyProfiles
+Export-ModuleMember -Function Get-SrmProfileStore, Get-SrmProfiles, Get-SrmProfile, Get-SrmPublicKeyPath, Test-SrmProfile, Save-SrmProfile, Remove-SrmProfile, Sync-SrmSshConfig, Import-SrmLegacyProfiles

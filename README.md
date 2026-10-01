@@ -29,7 +29,7 @@ The canonical metadata store is `%USERPROFILE%\.ssh\ssh-remote-manager\profiles.
 
 ## GUI usage
 
-The dark-theme GUI supports create/view/edit/rename/remove, a dedicated key per managed profile, public-key generation/copy/install/revoke guidance, connection testing, environment warnings, last-test time, capabilities and allowlists. “Import existing SSH Host” imports only an exact unmanaged `Host` by reference, preserving its existing `ProxyJump`, authentication, and other OpenSSH directives without rewriting it. Wildcard, multi-host, and `Include` entries remain read-only.
+The dark-theme GUI supports create/view/edit/rename/remove, a dedicated key per managed profile, public-key generation/copy/install/revoke guidance, connection testing, environment warnings, last-test time, capabilities and allowlists. Existing unencrypted OpenSSH key pairs can also be imported without displaying private-key content. Both conventional extensionless pairs (`id_rsa` + `id_rsa.pub`) and pairs such as `rsa.txt` + `rsa.pub` are supported and copied under the managed `.ssh` directory after the pair is verified. “Import existing SSH Host” imports only an exact unmanaged `Host` by reference, preserving its existing `ProxyJump`, authentication, and other OpenSSH directives without rewriting it. Wildcard, multi-host, and `Include` entries remain read-only.
 
 Three destructive concepts stay separate:
 

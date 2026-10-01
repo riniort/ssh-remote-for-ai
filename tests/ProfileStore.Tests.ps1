@@ -182,6 +182,26 @@ Host neutral
         Assert-Throws { Test-SrmProfile -Profile $profile -SshRoot $script:sshRoot -AllowMissingKey }
     }
 
+    It 'resolves rsa.txt with a sibling rsa.pub public key' {
+        $privatePath = Join-Path $script:sshRoot 'rsa.txt'
+        $publicPath = Join-Path $script:sshRoot 'rsa.pub'
+        Set-Content -LiteralPath $privatePath -Value 'placeholder private key' -Encoding Ascii
+        Set-Content -LiteralPath $publicPath -Value 'ssh-rsa AAAATEST' -Encoding Ascii
+
+        (Get-SrmPublicKeyPath -IdentityFile $privatePath) | Should Be ([System.IO.Path]::GetFullPath($publicPath))
+        $profile = New-TestProfile -Alias 'rsa-file' -KeyName 'rsa.txt'
+        (Test-SrmProfile -Profile $profile -SshRoot $script:sshRoot) | Should Be $true
+    }
+
+    It 'still resolves extensionless private keys with an appended .pub file' {
+        $privatePath = Join-Path $script:sshRoot 'id_ed25519'
+        $publicPath = "$privatePath.pub"
+        Set-Content -LiteralPath $privatePath -Value 'placeholder private key' -Encoding Ascii
+        Set-Content -LiteralPath $publicPath -Value 'ssh-ed25519 AAAATEST' -Encoding Ascii
+
+        (Get-SrmPublicKeyPath -IdentityFile $privatePath) | Should Be ([System.IO.Path]::GetFullPath($publicPath))
+    }
+
     It 'rejects secret-bearing profile properties' {
         $profile = New-TestProfile
         $profile | Add-Member -NotePropertyName password -NotePropertyValue 'must-not-persist'

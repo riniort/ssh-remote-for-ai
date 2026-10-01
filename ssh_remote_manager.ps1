@@ -236,7 +236,11 @@ function Select-Profile {
     $LogTargetsBox.Text = (@($logTargetLines) -join "`r`n")
     $LastTestedLabel.Text = if ($Profile.LastTestedUtc) { "Connection: last tested $($Profile.LastTestedUtc)" } else { "Connection: not tested" }
     $script:KeyPath = $Profile.KeyPath
-    $publicKeyPath = "$script:KeyPath.pub"
+    $publicKeyPath = if ($script:KeyPath -and $script:ProfileStoreAvailable -and $null -ne (Get-Command Get-SrmPublicKeyPath -ErrorAction SilentlyContinue)) {
+        Get-SrmPublicKeyPath -IdentityFile $script:KeyPath
+    } else {
+        "$script:KeyPath.pub"
+    }
     if ($script:ConnectionMode -eq "ssh-config-alias") {
         $script:PublicKey = ""
         $PublicKeyBox.Text = ""
@@ -365,7 +369,11 @@ function Ensure-SshKey {
         $safeAlias = $values.Alias -replace '[^A-Za-z0-9._-]', '_'
         $script:KeyPath = Join-Path $sshFolder "ssh_remote_manager_$safeAlias"
     }
-    $publicKeyPath = "$script:KeyPath.pub"
+    $publicKeyPath = if ($script:ProfileStoreAvailable -and $null -ne (Get-Command Get-SrmPublicKeyPath -ErrorAction SilentlyContinue)) {
+        Get-SrmPublicKeyPath -IdentityFile $script:KeyPath
+    } else {
+        "$script:KeyPath.pub"
+    }
 
     if (-not (Test-Path -LiteralPath $sshFolder)) {
         [void](New-Item -ItemType Directory -Path $sshFolder)
@@ -382,11 +390,89 @@ function Ensure-SshKey {
     }
 
     $script:PublicKey = (Get-Content -LiteralPath $publicKeyPath -Raw).Trim()
-    if ($script:PublicKey -notmatch '^ssh-ed25519 [A-Za-z0-9+/=]+(?: .+)?$') {
-        throw "The generated public key has an unexpected format."
+    if ($script:PublicKey -notmatch '^(?:ssh-(?:ed25519|rsa)|ecdsa-sha2-[A-Za-z0-9@._+-]+|sk-(?:ssh-ed25519|ecdsa-sha2-[A-Za-z0-9@._+-]+)@[A-Za-z0-9._-]+) [A-Za-z0-9+/=]+(?: .+)?$') {
+        throw "The public key has an unsupported OpenSSH format."
     }
     $PublicKeyBox.Text = $script:PublicKey
     $KeyStatusLabel.Text = "Key ready: $publicKeyPath"
+    $KeyStatusLabel.ForeColor = $ColorSuccess
+}
+
+function Import-OpenSshKeyPair {
+    if ($script:ConnectionMode -eq "ssh-config-alias") {
+        throw "This profile uses authentication from an existing SSH Host. Create a managed profile to import a key pair."
+    }
+    $values = Get-ValidatedValues
+    $privateDialog = New-Object System.Windows.Forms.OpenFileDialog
+    $privateDialog.Title = "Select an OpenSSH private key (for example rsa.txt)"
+    $privateDialog.Filter = "Private key files (*.txt;id_*)|*.txt;id_*|All files (*.*)|*.*"
+    $privateDialog.CheckFileExists = $true
+    $privateDialog.Multiselect = $false
+    if ($privateDialog.ShowDialog($Form) -ne [System.Windows.Forms.DialogResult]::OK) { return }
+
+    $sourcePrivate = [System.IO.Path]::GetFullPath($privateDialog.FileName)
+    $sourceItem = Get-Item -LiteralPath $sourcePrivate -Force
+    if (($sourceItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "The selected private key cannot be a symlink, junction, or reparse point."
+    }
+    $reader = New-Object System.IO.StreamReader($sourcePrivate, [System.Text.Encoding]::ASCII, $true)
+    try { $privateHeader = $reader.ReadLine() } finally { $reader.Dispose() }
+    if ($privateHeader -cne '-----BEGIN OPENSSH PRIVATE KEY-----') {
+        throw "The selected file is not an OpenSSH private key. Expected an OPENSSH PRIVATE KEY header."
+    }
+
+    $sourcePublic = if ($script:ProfileStoreAvailable -and $null -ne (Get-Command Get-SrmPublicKeyPath -ErrorAction SilentlyContinue)) {
+        Get-SrmPublicKeyPath -IdentityFile $sourcePrivate
+    } else {
+        "$sourcePrivate.pub"
+    }
+    if (-not (Test-Path -LiteralPath $sourcePublic -PathType Leaf)) {
+        throw "A matching public key was not found. For rsa.txt, place rsa.pub in the same folder."
+    }
+    $publicItem = Get-Item -LiteralPath $sourcePublic -Force
+    if (($publicItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "The selected public key cannot be a symlink, junction, or reparse point."
+    }
+    $publicKey = (Get-Content -LiteralPath $sourcePublic -Raw).Trim()
+    if ($publicKey -notmatch '^(?:ssh-(?:ed25519|rsa)|ecdsa-sha2-[A-Za-z0-9@._+-]+|sk-(?:ssh-ed25519|ecdsa-sha2-[A-Za-z0-9@._+-]+)@[A-Za-z0-9._-]+) [A-Za-z0-9+/=]+(?: .+)?$') {
+        throw "The companion public key has an unsupported OpenSSH format."
+    }
+
+    $sshKeygen = Get-Command ssh-keygen -ErrorAction Stop
+    $derivedOutput = & $sshKeygen.Source -y -P "" -f $sourcePrivate 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $derivedOutput) {
+        throw "The private key could not be validated. Encrypted keys are not supported because unattended SSH cannot prompt for a passphrase."
+    }
+    $derivedParts = ([string]($derivedOutput | Select-Object -First 1)).Trim() -split '\s+'
+    $publicParts = $publicKey -split '\s+'
+    if ($derivedParts.Count -lt 2 -or $publicParts.Count -lt 2 -or $derivedParts[0] -cne $publicParts[0] -or $derivedParts[1] -cne $publicParts[1]) {
+        throw "The public key does not match the selected private key."
+    }
+
+    $keyDirectory = Join-Path (Join-Path $env:USERPROFILE ".ssh") "ssh-remote-manager\keys"
+    if (-not (Test-Path -LiteralPath $keyDirectory)) { [void](New-Item -ItemType Directory -Path $keyDirectory -Force) }
+    $safeAlias = $values.Alias -replace '[^A-Za-z0-9._-]', '_'
+    $suffix = [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $privateExtension = [System.IO.Path]::GetExtension($sourcePrivate)
+    if ($privateExtension -ieq '.pub') {
+        throw "Select the private-key file, not the .pub file."
+    }
+    $destinationPrivate = Join-Path $keyDirectory ("${safeAlias}_${suffix}${privateExtension}")
+    $destinationPublic = [System.IO.Path]::ChangeExtension($destinationPrivate, '.pub')
+    try {
+        Copy-Item -LiteralPath $sourcePrivate -Destination $destinationPrivate -ErrorAction Stop
+        Copy-Item -LiteralPath $sourcePublic -Destination $destinationPublic -ErrorAction Stop
+    } catch {
+        foreach ($partialPath in @($destinationPrivate, $destinationPublic)) {
+            if (Test-Path -LiteralPath $partialPath -PathType Leaf) { Remove-Item -LiteralPath $partialPath -Force }
+        }
+        throw "The key pair could not be copied into the managed SSH directory."
+    }
+
+    $script:KeyPath = $destinationPrivate
+    $script:PublicKey = $publicKey
+    $PublicKeyBox.Text = $script:PublicKey
+    $KeyStatusLabel.Text = "Imported OpenSSH key pair: $destinationPublic"
     $KeyStatusLabel.ForeColor = $ColorSuccess
 }
 
@@ -525,7 +611,12 @@ function Delete-SelectedLocalKey {
         [System.Windows.Forms.MessageBoxIcon]::Error
     )
     if ($answer -ne [System.Windows.Forms.DialogResult]::Yes) { return }
-    foreach ($path in @($keyFullPath, "$keyFullPath.pub")) {
+    $publicKeyPath = if ($script:ProfileStoreAvailable -and $null -ne (Get-Command Get-SrmPublicKeyPath -ErrorAction SilentlyContinue)) {
+        Get-SrmPublicKeyPath -IdentityFile $keyFullPath
+    } else {
+        "$keyFullPath.pub"
+    }
+    foreach ($path in @($keyFullPath, $publicKeyPath)) {
         if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force }
     }
     $script:PublicKey = ""
@@ -873,19 +964,25 @@ $PasteLogTargetsButton = Add-PasteButton $LogTargetsBox 1026 374
 $GenerateButton = New-Object System.Windows.Forms.Button
 $GenerateButton.Text = "1. Generate / show key"
 $GenerateButton.Location = New-Object System.Drawing.Point(296, 446)
-$GenerateButton.Size = New-Object System.Drawing.Size(205, 38)
+$GenerateButton.Size = New-Object System.Drawing.Size(165, 38)
 $Form.Controls.Add($GenerateButton)
+
+$ImportKeyButton = New-Object System.Windows.Forms.Button
+$ImportKeyButton.Text = "Import key pair"
+$ImportKeyButton.Location = New-Object System.Drawing.Point(472, 446)
+$ImportKeyButton.Size = New-Object System.Drawing.Size(155, 38)
+$Form.Controls.Add($ImportKeyButton)
 
 $CopyKeyButton = New-Object System.Windows.Forms.Button
 $CopyKeyButton.Text = "Copy public key"
-$CopyKeyButton.Location = New-Object System.Drawing.Point(512, 446)
-$CopyKeyButton.Size = New-Object System.Drawing.Size(155, 38)
+$CopyKeyButton.Location = New-Object System.Drawing.Point(638, 446)
+$CopyKeyButton.Size = New-Object System.Drawing.Size(145, 38)
 $Form.Controls.Add($CopyKeyButton)
 
 $CopyCommandButton = New-Object System.Windows.Forms.Button
 $CopyCommandButton.Text = "Copy server install command"
-$CopyCommandButton.Location = New-Object System.Drawing.Point(678, 446)
-$CopyCommandButton.Size = New-Object System.Drawing.Size(412, 38)
+$CopyCommandButton.Location = New-Object System.Drawing.Point(794, 446)
+$CopyCommandButton.Size = New-Object System.Drawing.Size(296, 38)
 $Form.Controls.Add($CopyCommandButton)
 
 $KeyStatusLabel = New-Object System.Windows.Forms.Label
@@ -985,6 +1082,7 @@ foreach ($button in @(
     $ReloadProfilesButton,
     $ImportHostButton,
     $GenerateButton,
+    $ImportKeyButton,
     $CopyKeyButton,
     $CopyCommandButton,
     $TestButton,
@@ -1120,6 +1218,14 @@ $GenerateButton.Add_Click({
         Ensure-SshKey
     } catch {
         Show-Message $_.Exception.Message "SSH Remote Manager Error" ([System.Windows.Forms.MessageBoxIcon]::Error)
+    }
+})
+
+$ImportKeyButton.Add_Click({
+    try {
+        Import-OpenSshKeyPair
+    } catch {
+        Show-Message $_.Exception.Message "SSH Remote Manager Key Import Error" ([System.Windows.Forms.MessageBoxIcon]::Error)
     }
 })
 
